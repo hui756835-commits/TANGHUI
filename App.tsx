@@ -6,15 +6,17 @@ import {
   Calendar, Check, X, Info, Plus, Minus, Flag, Trash2, Box, 
   Shirt, Plug, Pill, Footprints, Camera, Sun, Wallet, FileText, Umbrella, 
   Smartphone, Watch, CreditCard, Sandwich, User, Undo2, ChevronDown, ChevronUp, ShoppingBag,
-  List, Layers, Share2, AlertTriangle, CloudRain, Thermometer, ArrowRight, Sparkles, CheckCircle2
+  List, Layers, Share2, AlertTriangle, CloudRain, Thermometer, ArrowRight, Sparkles, CheckCircle2,
+  MessageCircle, Send, Bot, Loader2
 } from 'lucide-react';
-import { generatePackingList } from './services/geminiService';
+import { generatePackingList, createAssistantChat } from './services/geminiService';
 import { Button } from './components/Button';
 import { LoadingOverlay } from './components/LoadingOverlay';
 import { 
   Screen, TravelPlan, AIPackingListResponse, PackingItem, 
   PackedItem, LuggageItem
 } from './types';
+import { Chat } from '@google/genai';
 
 // --- Utility: Icon Mapper ---
 const getItemIcon = (name: string, category: string) => {
@@ -94,17 +96,17 @@ const OnboardingOverlay: React.FC<{ onFinish: () => void }> = ({ onFinish }) => 
         {
             icon: <Sparkles size={48} className="text-yellow-400" />,
             title: "Smart Analysis",
-            desc: "Tell us your plan in plain English. AI analyzes weather, terrain, and needs."
+            desc: "Tell us your plan. AI analyzes weather, terrain, and needs."
         },
         {
             icon: <Layers size={48} className="text-blue-400" />,
             title: "Swipe to Pack",
-            desc: "A fun game to pack items. Swipe UP to pack, DOWN to discard, LEFT for later."
+            desc: "A fun game to pack items. Swipe UP to pack, DOWN to discard."
         },
         {
             icon: <CheckCircle2 size={48} className="text-green-400" />,
             title: "Ready to Go",
-            desc: "Get a perfectly organized checklist. Never forget a thing again."
+            desc: "Get a perfectly organized checklist. Ask the AI assistant for help."
         }
     ];
 
@@ -353,27 +355,28 @@ const LuggageScreen: React.FC<{
   return (
     <div className="h-full flex flex-col bg-slate-50">
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="shrink-0 z-10">
-        {/* COMPACT Weather & Intelligence Dashboard - Top 1/5th approx */}
         <div className="h-[20vh] min-h-[160px] bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-4 rounded-b-3xl shadow-lg relative overflow-hidden flex flex-col justify-center">
-            <div className="flex items-start justify-between gap-4 h-full">
+            <div className="absolute top-0 right-0 p-4 opacity-20">
+                <Sun size={80} />
+            </div>
+            <div className="flex items-start justify-between gap-4 h-full relative z-10">
                  <div className="flex flex-col justify-center h-full flex-1">
                      <div className="flex items-center gap-2 mb-1">
                         <MapPin size={14} className="opacity-80"/>
-                        <span className="text-xs font-bold opacity-80 uppercase tracking-wide">Destination Forecast</span>
+                        <span className="text-xs font-bold opacity-80 uppercase tracking-wide">Forecast</span>
                      </div>
                      <h2 className="text-3xl font-bold mb-1">{data.weather.tempRange}</h2>
-                     <div className="text-xs opacity-90 leading-tight">{data.weather.summary}</div>
+                     <div className="text-sm font-medium opacity-90 leading-tight">{data.weather.summary}</div>
                      <div className="text-[10px] opacity-70 mt-1">{data.weather.rainProb}</div>
                  </div>
                  
-                 {/* Scrollable Tips Area */}
                  <div className="flex-1 h-full bg-white/10 backdrop-blur-md rounded-xl p-3 text-xs text-blue-50 border border-white/10 overflow-hidden flex flex-col">
                     <div className="flex items-center gap-1 font-bold mb-1 text-yellow-300 shrink-0">
                          <AlertTriangle size={12} />
-                         <span>Travel Tips</span>
+                         <span>Smart Tips</span>
                     </div>
                     <div className="overflow-y-auto pr-1 custom-scrollbar">
-                        <ul className="list-disc list-inside space-y-1 opacity-90 text-[10px] leading-tight">
+                        <ul className="list-disc list-inside space-y-2 opacity-90 text-[10px] leading-tight">
                             {data.destinationTips.map((tip, i) => (
                                 <li key={i}>{tip}</li>
                             ))}
@@ -502,6 +505,8 @@ const PackingGameScreen: React.FC<PackingGameProps> = ({ categories, onFinish })
   }, [categories]);
 
   const currentItem = queue[currentIndex];
+  // Slice to get upcoming cards for the stack effect
+  const visibleItems = queue.slice(currentIndex, currentIndex + 3);
 
   const handleDragEnd = (_: any, info: PanInfo) => {
     const threshold = 100;
@@ -518,7 +523,8 @@ const PackingGameScreen: React.FC<PackingGameProps> = ({ categories, onFinish })
     vibrate(30);
     setFeedback(action);
     if (action === 'pack' || action === 'later') {
-      setPackedItems(prev => [...prev, { ...currentItem, quantity: currentQuantity, status: action }]);
+      const status = action === 'pack' ? 'packed' : 'later';
+      setPackedItems(prev => [...prev, { ...currentItem, quantity: currentQuantity, status }]);
     }
     
     setTimeout(() => {
@@ -550,14 +556,11 @@ const PackingGameScreen: React.FC<PackingGameProps> = ({ categories, onFinish })
 
   return (
     <div className="h-full flex flex-col relative overflow-hidden bg-slate-100">
-      {/* Enhanced Progress Bar */}
       <div className="h-1.5 bg-slate-200 w-full relative">
         <motion.div 
           className="h-full bg-blue-600 rounded-r-full" 
           animate={{ width: `${progress}%` }}
         />
-        <div className="absolute top-0 left-1/3 w-0.5 h-full bg-white/50" />
-        <div className="absolute top-0 left-2/3 w-0.5 h-full bg-white/50" />
       </div>
 
       <div className="p-4 flex justify-between items-center w-full px-6 z-10">
@@ -580,67 +583,100 @@ const PackingGameScreen: React.FC<PackingGameProps> = ({ categories, onFinish })
       </div>
 
       <div className="flex-1 flex items-center justify-center relative perspective-1000">
+        {/* Helper Indicators */}
         <div className="absolute inset-0 pointer-events-none">
             <div className="absolute top-10 left-0 right-0 flex flex-col items-center opacity-30">
                 <ArrowUp size={32} className="text-blue-500 animate-bounce" />
                 <span className="text-xs font-bold text-blue-500 mt-1 uppercase tracking-widest">Pack It</span>
             </div>
-            
             <div className="absolute bottom-10 left-0 right-0 flex flex-col items-center opacity-30">
                 <span className="text-xs font-bold text-slate-400 mb-1 uppercase tracking-widest">Discard</span>
                 <ArrowDown size={32} className="text-slate-400 animate-bounce" />
             </div>
-
             <div className="absolute top-1/2 left-4 -translate-y-1/2 flex flex-col items-center opacity-30">
                 <ArrowLeft size={32} className="text-red-500 animate-pulse" />
                 <span className="text-[10px] font-bold text-red-500 mt-1 uppercase w-12 text-center leading-tight">Pack Later</span>
             </div>
         </div>
 
-        <AnimatePresence mode="wait">
-          {!feedback && (
-            <motion.div
-              key={currentItem.id}
-              style={{ x, y, rotate, cursor: 'grab' }}
-              drag
-              dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
-              dragElastic={0.6}
-              onDragEnd={handleDragEnd}
-              whileTap={{ cursor: 'grabbing', scale: 1.05 }}
-              className="w-72 h-[420px] bg-white rounded-[32px] shadow-2xl shadow-blue-900/10 border border-slate-100 flex flex-col items-center justify-center relative p-6 z-20 select-none"
-            >
-              <motion.div style={{ opacity: opacityPack }} className="absolute top-6 bg-green-500 text-white px-6 py-2 rounded-full font-bold shadow-lg shadow-green-200 tracking-wider">PACK</motion.div>
-              <motion.div style={{ opacity: opacityDiscard }} className="absolute bottom-6 bg-slate-400 text-white px-6 py-2 rounded-full font-bold shadow-lg shadow-slate-200 tracking-wider">DISCARD</motion.div>
-              <motion.div style={{ opacity: opacityLater }} className="absolute left-6 top-1/2 -rotate-90 origin-left bg-red-500 text-white px-6 py-2 rounded-full font-bold shadow-lg shadow-red-200 tracking-wider whitespace-nowrap">LATER</motion.div>
+        {/* Stacked Cards */}
+        <div className="relative w-full max-w-sm flex justify-center items-center h-[420px]">
+            <AnimatePresence>
+                {visibleItems.map((item, index) => {
+                    const isTop = index === 0;
+                    // Stack logic: Cards behind get smaller, lower, and more transparent
+                    const stackedScale = 1 - (index * 0.05);
+                    const stackedY = index * 20; 
+                    const stackedOpacity = 1 - (index * 0.2);
+                    const zIndex = 30 - index;
 
-              <div className="flex-1 flex flex-col items-center justify-center w-full">
-                 <div className="w-36 h-36 rounded-full bg-blue-50 flex items-center justify-center mb-8 relative border-4 border-white shadow-inner">
-                    {getItemIcon(currentItem.name, currentItem.category)}
-                 </div>
-                 
-                 <h2 className="text-2xl font-bold text-slate-800 text-center mb-3 leading-tight">{currentItem.name}</h2>
-                 <p className="text-sm text-slate-500 text-center px-4 leading-relaxed line-clamp-3">{currentItem.reason}</p>
-                 
-                 <div className="mt-8 flex items-center gap-5 bg-slate-50 rounded-full px-2 py-1.5 border border-slate-100 shadow-sm" onPointerDown={(e) => e.stopPropagation()}>
-                    <button 
-                        onClick={() => { vibrate(5); setCurrentQuantity(q => Math.max(1, q - 1)); }}
-                        className="w-10 h-10 flex items-center justify-center rounded-full bg-white text-slate-600 shadow-sm active:scale-90 transition-all hover:bg-slate-100"
-                    >
-                        <Minus size={18} />
-                    </button>
-                    <span className="font-bold text-xl w-8 text-center text-slate-700">{currentQuantity}</span>
-                    <button 
-                        onClick={() => { vibrate(5); setCurrentQuantity(q => q + 1); }}
-                        className="w-10 h-10 flex items-center justify-center rounded-full bg-blue-600 text-white shadow-md shadow-blue-200 active:scale-90 transition-all hover:bg-blue-700"
-                    >
-                        <Plus size={18} />
-                    </button>
-                 </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                    if (!isTop) {
+                        return (
+                            <motion.div
+                                key={item.id}
+                                initial={false}
+                                animate={{ scale: stackedScale, y: stackedY, opacity: stackedOpacity }}
+                                transition={{ duration: 0.3 }}
+                                className="absolute w-72 h-[420px] bg-white rounded-[32px] shadow-sm border border-slate-100 flex flex-col items-center justify-center p-6 select-none"
+                                style={{ zIndex }}
+                            >
+                                <div className="w-36 h-36 rounded-full bg-slate-50 flex items-center justify-center mb-8 border-4 border-white">
+                                    {getItemIcon(item.name, item.category)}
+                                </div>
+                                <h2 className="text-xl font-bold text-slate-800 text-center mb-3 leading-tight opacity-50">{item.name}</h2>
+                            </motion.div>
+                        );
+                    }
+
+                    // Interactive Top Card
+                    return (
+                        !feedback && (
+                            <motion.div
+                                key={item.id}
+                                style={{ x, y, rotate, cursor: 'grab', zIndex }}
+                                drag
+                                dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
+                                dragElastic={0.6}
+                                onDragEnd={handleDragEnd}
+                                whileTap={{ cursor: 'grabbing', scale: 1.05 }}
+                                className="absolute w-72 h-[420px] bg-white rounded-[32px] shadow-2xl shadow-blue-900/10 border border-slate-100 flex flex-col items-center justify-center p-6 z-20 select-none"
+                            >
+                                <motion.div style={{ opacity: opacityPack }} className="absolute top-6 bg-green-500 text-white px-6 py-2 rounded-full font-bold shadow-lg shadow-green-200 tracking-wider">PACK</motion.div>
+                                <motion.div style={{ opacity: opacityDiscard }} className="absolute bottom-6 bg-slate-400 text-white px-6 py-2 rounded-full font-bold shadow-lg shadow-slate-200 tracking-wider">DISCARD</motion.div>
+                                <motion.div style={{ opacity: opacityLater }} className="absolute left-6 top-1/2 -rotate-90 origin-left bg-red-500 text-white px-6 py-2 rounded-full font-bold shadow-lg shadow-red-200 tracking-wider whitespace-nowrap">LATER</motion.div>
+
+                                <div className="flex-1 flex flex-col items-center justify-center w-full">
+                                    <div className="w-36 h-36 rounded-full bg-blue-50 flex items-center justify-center mb-8 relative border-4 border-white shadow-inner">
+                                        {getItemIcon(item.name, item.category)}
+                                    </div>
+                                    
+                                    <h2 className="text-2xl font-bold text-slate-800 text-center mb-3 leading-tight">{item.name}</h2>
+                                    <p className="text-sm text-slate-500 text-center px-4 leading-relaxed line-clamp-3">{item.reason}</p>
+                                    
+                                    <div className="mt-8 flex items-center gap-5 bg-slate-50 rounded-full px-2 py-1.5 border border-slate-100 shadow-sm" onPointerDown={(e) => e.stopPropagation()}>
+                                        <button 
+                                            onClick={() => { vibrate(5); setCurrentQuantity(q => Math.max(1, q - 1)); }}
+                                            className="w-10 h-10 flex items-center justify-center rounded-full bg-white text-slate-600 shadow-sm active:scale-90 transition-all hover:bg-slate-100"
+                                        >
+                                            <Minus size={18} />
+                                        </button>
+                                        <span className="font-bold text-xl w-8 text-center text-slate-700">{currentQuantity}</span>
+                                        <button 
+                                            onClick={() => { vibrate(5); setCurrentQuantity(q => q + 1); }}
+                                            className="w-10 h-10 flex items-center justify-center rounded-full bg-blue-600 text-white shadow-md shadow-blue-200 active:scale-90 transition-all hover:bg-blue-700"
+                                        >
+                                            <Plus size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+                            </motion.div>
+                        )
+                    );
+                }).reverse()}
+            </AnimatePresence>
+        </div>
         
+        {/* Feedback Animations */}
         <AnimatePresence>
             {feedback === 'pack' && <motion.div initial={{ scale: 0.5, opacity: 0, y: 0 }} animate={{ scale: 1.5, y: -100, opacity: 1 }} exit={{ opacity: 0 }} className="absolute z-30 pointer-events-none"><Check size={100} className="text-green-500 drop-shadow-xl" /></motion.div>}
             {feedback === 'discard' && <motion.div initial={{ scale: 0.5, opacity: 0, y: 0 }} animate={{ scale: 1.5, y: 100, opacity: 1 }} exit={{ opacity: 0 }} className="absolute z-30 pointer-events-none"><X size={100} className="text-slate-400 drop-shadow-xl" /></motion.div>}
@@ -657,14 +693,136 @@ const PackingGameScreen: React.FC<PackingGameProps> = ({ categories, onFinish })
   );
 };
 
-// 6. Summary Screen (Travel Card & Sharing)
+// 6. Chat Overlay Component
+const ChatOverlay: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  plan: string;
+  data: AIPackingListResponse;
+}> = ({ isOpen, onClose, plan, data }) => {
+  const [messages, setMessages] = useState<{role: 'user'|'model', text: string}[]>([
+      { role: 'model', text: `Hi! I'm your Packwise Assistant. I know you're heading to a place where it's ${data.weather.summary}. Ask me anything!` }
+  ]);
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const chatRef = useRef<Chat | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isOpen && !chatRef.current) {
+        chatRef.current = createAssistantChat(plan, data);
+    }
+  }, [isOpen, plan, data]);
+
+  useEffect(() => {
+      if (scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+  }, [messages]);
+
+  const handleSend = async () => {
+    if (!input.trim() || isLoading || !chatRef.current) return;
+    const userMsg = input;
+    setInput('');
+    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    setIsLoading(true);
+
+    try {
+        const result = await chatRef.current.sendMessage({ message: userMsg });
+        const responseText = result.text;
+        setMessages(prev => [...prev, { role: 'model', text: responseText }]);
+    } catch (e) {
+        setMessages(prev => [...prev, { role: 'model', text: "Sorry, I had trouble connecting. Please try again." }]);
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+  return (
+      <AnimatePresence>
+          {isOpen && (
+              <>
+                <motion.div 
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60]"
+                    onClick={onClose}
+                />
+                <motion.div 
+                    initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                    className="fixed bottom-0 left-0 right-0 h-[80vh] bg-slate-50 rounded-t-3xl z-[70] flex flex-col shadow-2xl overflow-hidden"
+                >
+                    <div className="p-4 bg-white border-b border-slate-100 flex items-center justify-between shrink-0">
+                        <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600">
+                                <Sparkles size={20} />
+                            </div>
+                            <div>
+                                <h3 className="font-bold text-slate-800">Packwise Assistant</h3>
+                                <p className="text-xs text-slate-400">Powered by Gemini</p>
+                            </div>
+                        </div>
+                        <button onClick={onClose} className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 transition-colors">
+                            <ChevronDown size={20} />
+                        </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
+                        {messages.map((msg, i) => (
+                            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`max-w-[80%] p-3 rounded-2xl text-sm leading-relaxed ${
+                                    msg.role === 'user' 
+                                        ? 'bg-blue-600 text-white rounded-tr-sm' 
+                                        : 'bg-white border border-slate-200 text-slate-700 rounded-tl-sm shadow-sm'
+                                }`}>
+                                    {msg.text}
+                                </div>
+                            </div>
+                        ))}
+                        {isLoading && (
+                            <div className="flex justify-start">
+                                <div className="bg-white border border-slate-200 p-3 rounded-2xl rounded-tl-sm shadow-sm flex items-center gap-2">
+                                    <Loader2 size={16} className="animate-spin text-blue-500" />
+                                    <span className="text-xs text-slate-400">Thinking...</span>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="p-4 bg-white border-t border-slate-100 shrink-0 safe-bottom">
+                        <div className="flex items-center gap-2">
+                            <input 
+                                value={input}
+                                onChange={e => setInput(e.target.value)}
+                                placeholder="Ask about weather, items..."
+                                className="flex-1 bg-slate-100 border-none rounded-full px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                                onKeyDown={e => e.key === 'Enter' && handleSend()}
+                            />
+                            <button 
+                                onClick={handleSend}
+                                disabled={!input.trim() || isLoading}
+                                className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-blue-700 active:scale-95 transition-all shadow-lg shadow-blue-200"
+                            >
+                                <Send size={20} className={isLoading ? 'opacity-0' : 'ml-0.5'} />
+                            </button>
+                        </div>
+                    </div>
+                </motion.div>
+              </>
+          )}
+      </AnimatePresence>
+  );
+};
+
+
+// 7. Summary Screen (Travel Card & Sharing)
 const SummaryScreen: React.FC<{
   packedItems: PackedItem[];
-  weatherData?: AIPackingListResponse['weather'];
+  packingData: AIPackingListResponse | null;
   planDescription: string;
   onUpdateItems: (newItems: PackedItem[]) => void;
-}> = ({ packedItems, weatherData, planDescription, onUpdateItems }) => {
+}> = ({ packedItems, packingData, planDescription, onUpdateItems }) => {
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showChat, setShowChat] = useState(false);
   const [addingToCategory, setAddingToCategory] = useState<string | null>(null);
   
   const laterItems = packedItems.filter(i => i.status === 'later');
@@ -694,7 +852,7 @@ const SummaryScreen: React.FC<{
   };
 
   return (
-    <div className="h-full flex flex-col bg-slate-50">
+    <div className="h-full flex flex-col bg-slate-50 relative">
       <div className="bg-white p-6 pb-4 shadow-sm z-10 shrink-0">
          <div className="flex justify-between items-start mb-4">
              <div>
@@ -729,17 +887,12 @@ const SummaryScreen: React.FC<{
                              <div className="divide-y divide-slate-50">
                                  {itemsInCategory.map((item) => (
                                      <div key={item.id} className="relative overflow-hidden bg-white">
-                                         {/* 
-                                            Updated Swipe to Delete:
-                                            Background is now left-aligned (left-0) because dragging right reveals the left side.
-                                         */}
                                          <div className="absolute inset-y-0 left-0 w-20 bg-red-500 flex items-center justify-start px-4">
                                             <Trash2 size={18} className="text-white" />
                                          </div>
 
                                          <motion.div
                                              drag="x"
-                                             // Allow dragging right to reveal delete logic
                                              dragConstraints={{ left: 0, right: 0 }}
                                              dragElastic={{ left: 0, right: 0.1 }}
                                              onDragEnd={(_, info) => {
@@ -764,7 +917,6 @@ const SummaryScreen: React.FC<{
                                  ))}
                              </div>
                              
-                             {/* Add Item Button */}
                              <div className="p-2 bg-slate-50/30">
                                  {addingToCategory === category ? (
                                      <div className="flex gap-2 p-1">
@@ -794,8 +946,8 @@ const SummaryScreen: React.FC<{
       </div>
 
       {laterItems.length > 0 && (
-          <div className="absolute bottom-6 left-4 right-4 max-w-md mx-auto z-50">
-             <motion.div initial={{ y: 100 }} animate={{ y: 0 }} className="bg-white shadow-2xl shadow-red-900/10 rounded-2xl overflow-hidden border border-red-50">
+          <div className="absolute bottom-24 left-4 right-4 max-w-md mx-auto z-40 pointer-events-none">
+             <motion.div initial={{ y: 100 }} animate={{ y: 0 }} className="bg-white shadow-2xl shadow-red-900/10 rounded-2xl overflow-hidden border border-red-50 pointer-events-auto">
                 <div className="bg-red-50/80 p-4 backdrop-blur-sm">
                     <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2 text-red-600">
@@ -819,6 +971,18 @@ const SummaryScreen: React.FC<{
           </div>
       )}
 
+      {/* FAB for Chat */}
+      <motion.button
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        whileHover={{ scale: 1.1 }}
+        whileTap={{ scale: 0.9 }}
+        onClick={() => setShowChat(true)}
+        className="absolute bottom-6 right-6 w-14 h-14 bg-gradient-to-br from-blue-600 to-indigo-600 text-white rounded-full shadow-lg shadow-blue-500/30 flex items-center justify-center z-50"
+      >
+        <MessageCircle size={24} fill="currentColor" className="text-white" />
+      </motion.button>
+
       {/* Share Modal Mockup */}
       <AnimatePresence>
           {showShareModal && (
@@ -833,7 +997,7 @@ const SummaryScreen: React.FC<{
                       <div className="bg-blue-600 p-6 text-white text-center relative overflow-hidden">
                           <div className="absolute top-0 left-0 w-full h-full opacity-20"><Plane size={200} className="absolute -right-10 -top-10 rotate-12" /></div>
                           <h3 className="text-xl font-bold relative z-10 mb-1">My Packing List</h3>
-                          <p className="text-blue-200 text-xs relative z-10">{weatherData?.summary} • {totalItems} Items</p>
+                          <p className="text-blue-200 text-xs relative z-10">{packingData?.weather.summary} • {totalItems} Items</p>
                       </div>
                       <div className="p-6">
                           <div className="flex justify-around mb-6 text-center">
@@ -847,6 +1011,15 @@ const SummaryScreen: React.FC<{
               </div>
           )}
       </AnimatePresence>
+
+      {packingData && (
+          <ChatOverlay 
+            isOpen={showChat} 
+            onClose={() => setShowChat(false)} 
+            plan={planDescription} 
+            data={packingData} 
+          />
+      )}
     </div>
   );
 };
@@ -920,7 +1093,7 @@ export default function App() {
           <SummaryScreen 
             key="summary" 
             packedItems={packedItems}
-            weatherData={packingData?.weather}
+            packingData={packingData}
             planDescription={currentPlan}
             onUpdateItems={setPackedItems}
           />

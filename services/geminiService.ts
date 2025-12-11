@@ -1,7 +1,13 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, Chat } from "@google/genai";
 import { AIPackingListResponse, PackedItem } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const apiKey = process.env.API_KEY;
+
+if (!apiKey) {
+  console.error("API Key is missing! Please check Environment Variables.");
+}
+
+const ai = new GoogleGenAI({ apiKey: apiKey || '' });
 
 const MODEL_NAME = 'gemini-2.5-flash';
 
@@ -92,4 +98,30 @@ export const generatePackingList = async (planDescription: string): Promise<AIPa
   const text = response.text;
   if (!text) throw new Error("No response from AI");
   return JSON.parse(text) as AIPackingListResponse;
+};
+
+export const createAssistantChat = (plan: string, data: AIPackingListResponse): Chat => {
+  const systemInstruction = `
+    You are Packwise Assistant, a friendly and knowledgeable travel packing expert.
+    
+    CURRENT TRIP DETAILS:
+    - User Plan: "${plan}"
+    - Destination Weather: ${data.weather.summary} (${data.weather.tempRange})
+    - Luggage: ${data.luggageRecommendation.packageName}
+    
+    Your role is to:
+    1. Answer questions about what to pack.
+    2. Suggest items based on the weather/activities.
+    3. Provide brief travel tips for the destination.
+    
+    Keep responses concise (under 3 sentences) unless asked for elaboration. 
+    Be encouraging and helpful.
+  `;
+
+  return ai.chats.create({
+    model: MODEL_NAME,
+    config: {
+      systemInstruction,
+    }
+  });
 };
